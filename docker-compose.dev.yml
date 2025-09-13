@@ -1,0 +1,67 @@
+# Docker Compose for M32 Business Intelligence Copilot
+# Simple development setup with SQLite (no external database)
+
+services:
+  # Backend API (Development)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: m32-backend-dev
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_MODEL_NAME=${GROQ_MODEL_NAME:-openai/gpt-oss-120b}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - DATABASE_URL=sqlite:///./m32_business_copilot.db
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - ./ai-core:/app/ai-core
+      - ./tools:/app/tools
+      - ./m32_business_copilot.db:/app/m32_business_copilot.db
+      - ./.env:/app/.env
+    ports:
+      - "8000:8000"
+    networks:
+      - m32-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend Application (Development)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: m32-frontend-dev
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/package.json:/app/package.json
+    ports:
+      - "3000:3000"
+    networks:
+      - m32-network
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    command: npm run dev -- --host 0.0.0.0 --port 3000
+
+networks:
+  m32-network:
+    driver: bridge

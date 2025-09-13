@@ -1,0 +1,109 @@
+# Docker Compose for M32 Business Intelligence Copilot
+# Development environment with hot reload and debugging
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  database:
+    image: postgres:15-alpine
+    container_name: m32-database
+    environment:
+      POSTGRES_DB: m32_business_copilot
+      POSTGRES_USER: m32user
+      POSTGRES_PASSWORD: m32password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - m32-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U m32user -d m32_business_copilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: m32-redis
+    command: redis-server --appendonly yes --requirepass m32redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - m32-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: m32-backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-m32user}:${POSTGRES_PASSWORD:-m32password}@database:5432/${POSTGRES_DB:-m32_business_copilot}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-m32redis}@redis:6379/0
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_MODEL_NAME=${GROQ_MODEL_NAME:-openai/gpt-oss-120b}
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    networks:
+      - m32-network
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: m32-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - m32-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  m32-network:
+    driver: bridge
